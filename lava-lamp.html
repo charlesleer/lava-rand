@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual LavaRand</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      background-color: #121212;
+      display: flex;
+      justify-content: center;
+      padding: 20px;
+    }
+    .screen {
+      margin: 0 auto;
+      max-width: 400px;
+    }
+    @media print {
+      body { background-color: blue; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root" class="screen"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    
+    const LavaLampRNG = () => {
+      const canvasRef = useRef(null);
+      const [dimensions, setDimensions] = useState({ width: 320, height: 480 });
+      const [color1] = useState('#FF00FF'); 
+      const [color2] = useState('#00FFFF');
+      const [randomOutput, setRandomOutput] = useState('');
+      const [randomLength, setRandomLength] = useState(16);
+      const [samplingInterval, setSamplingInterval] = useState(100); // ms
+      const entropyBuffer = useRef([]);
+      const entropyIndex = useRef(0);
+      const samplingTimerRef = useRef(null);
+    
+      // Metaball configuration
+      const metaballs = useRef([]);
+      const numMetaballs = 6;
+      
+      // Initialize metaballs
+      useEffect(() => {
+        // Create metaballs with specific initial positions to ensure reliable startup
+        metaballs.current = [];
+        for (let i = 0; i < numMetaballs; i++) {
+          metaballs.current.push({
+            x: dimensions.width * (0.2 + 0.6 * (i / numMetaballs)),
+            y: dimensions.height * (0.2 + 0.6 * Math.sin(i / 2)),
+            vx: 0.2 * Math.cos(i),
+            vy: 0.2 * Math.sin(i),
+            r: 20 + 25 * (i / numMetaballs)
+          });
+        }
+        
+        // Start entropy collection
+        startSampling();
+        
+        // Generate an initial value after a short delay
+        setTimeout(() => {
+          collectEntropy(); // Force immediate entropy collection
+          generateRandomValue();
+        }, 1000);
+        
+        return () => {
+          if (samplingTimerRef.current) {
+            clearInterval(samplingTimerRef.current);
+          }
+        };
+      }, [dimensions]);
+      
+      // Start entropy sampling
+      const startSampling = () => {
+        if (samplingTimerRef.current) {
+          clearInterval(samplingTimerRef.current);
+        }
+        
+        samplingTimerRef.current = setInterval(() => {
+          collectEntropy();
+        }, samplingInterval);
+      };
+      
+      // Collect entropy from metaballs
+      const collectEntropy = () => {
+        // Collect all metaball positions and velocities
+        metaballs.current.forEach(ball => {
+          // Convert positions to integers to avoid undefined issues
+          const xVal = Math.floor((ball.x % dimensions.width) * 100) % 256;
+          const yVal = Math.floor((ball.y % dimensions.height) * 100) % 256;
+          const vxVal = Math.floor((Math.abs(ball.vx) * 1000)) % 256;
+          const vyVal = Math.floor((Math.abs(ball.vy) * 1000)) % 256;
+          
+          // Add these values to the entropy buffer
+          entropyBuffer.current.push(xVal, yVal, vxVal, vyVal);
+        });
+        
+        // Keep buffer at reasonable size
+        if (entropyBuffer.current.length > 1000) {
+          entropyBuffer.current = entropyBuffer.current.slice(-1000);
+        }
+      };
+      
+      // Generate random bytes from entropy buffer
+      const generateRandomBytes = (numBytes) => {
+        if (entropyBuffer.current.length < 10) {
+          return "Not enough entropy collected yet";
+        }
+        
+        let result = '';
+        const hexChars = '0123456789abcdef';
+        
+        for (let i = 0; i < numBytes; i++) {
+          // Get values from entropy buffer, with fallbacks
+          const idx1 = Math.floor(Math.random() * entropyBuffer.current.length);
+          const idx2 = Math.floor(Math.random() * entropyBuffer.current.length);
+          
+          // Ensure we have valid numbers (fallback to a random value if undefined)
+          const val1 = typeof entropyBuffer.current[idx1] === 'number' ? entropyBuffer.current[idx1] : Math.floor(Math.random() * 256);
+          const val2 = typeof entropyBuffer.current[idx2] === 'number' ? entropyBuffer.current[idx2] : Math.floor(Math.random() * 256);
+          
+          // Mix the values to create a byte
+          const byte = Math.floor((val1 + val2) % 256);
+          
+          // Convert to hex - ensure valid indices with Math.min/max
+          const highNibble = Math.max(0, Math.min(15, Math.floor(byte / 16)));
+          const lowNibble = Math.max(0, Math.min(15, byte % 16));
+          
+          result += hexChars[highNibble];
+          result += hexChars[lowNibble];
+        }
+        
+        return result;
+      };
+      
+      // Generate a new random value
+      const generateRandomValue = () => {
+        const hexValue = generateRandomBytes(Math.ceil(randomLength / 2));
+        setRandomOutput(hexValue);
+      };
+    
+      // Animation loop
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        let animationFrameId;
+        
+        // Create gradient for background
+        const createGradient = () => {
+          const gradient = ctx.createLinearGradient(0, 0, 0, dimensions.height);
+          gradient.addColorStop(0, color2);
+          gradient.addColorStop(1, color1);
+          return gradient;
+        };
+        
+        // Update metaball positions
+        const updateMetaballs = () => {
+          metaballs.current.forEach(ball => {
+            // Add some wobble to velocity
+            ball.vx += (Math.random() - 0.5) * 0.1;
+            ball.vy += (Math.random() - 0.5) * 0.1;
+            
+            // Constrain velocity
+            ball.vx = Math.max(Math.min(ball.vx, 1), -1);
+            ball.vy = Math.max(Math.min(ball.vy, 1), -1);
+            
+            // Update position
+            ball.x += ball.vx;
+            ball.y += ball.vy;
+            
+            // Bounce off walls
+            if (ball.x < ball.r || ball.x > dimensions.width - ball.r) {
+              ball.vx *= -1;
+            }
+            if (ball.y < ball.r || ball.y > dimensions.height - ball.r) {
+              ball.vy *= -1;
+            }
+            
+            // Ensure within bounds
+            ball.x = Math.max(ball.r, Math.min(ball.x, dimensions.width - ball.r));
+            ball.y = Math.max(ball.r, Math.min(ball.y, dimensions.height - ball.r));
+          });
+        };
+        
+        // Calculate metaball field at point (x,y)
+        const calculateMetaballValue = (x, y) => {
+          let sum = 0;
+          metaballs.current.forEach(ball => {
+            const dx = x - ball.x;
+            const dy = y - ball.y;
+            const distSq = dx * dx + dy * dy;
+            sum += ball.r * ball.r / distSq;
+          });
+          return sum;
+        };
+        
+        // Draw the scene
+        const render = () => {
+          // Clear canvas
+          ctx.clearRect(0, 0, dimensions.width, dimensions.height);
+          
+          // Use 2D metaball technique with smoothing
+          const threshold = 1.0;
+          const pixelSize = 2; // Reduced for better quality
+          
+          // Create an offscreen canvas for the metaball field
+          const offscreen = document.createElement('canvas');
+          offscreen.width = dimensions.width;
+          offscreen.height = dimensions.height;
+          const offCtx = offscreen.getContext('2d');
+          const imgData = offCtx.createImageData(dimensions.width, dimensions.height);
+          const data = imgData.data;
+          
+          // Loop through pixel grid to create metaball field
+          for (let y = 0; y < dimensions.height; y += pixelSize) {
+            for (let x = 0; x < dimensions.width; x += pixelSize) {
+              const value = calculateMetaballValue(x, y);
+              
+              // Anti-aliasing by using smooth step function
+              const smoothedAlpha = Math.min(Math.max((value - threshold) * 5, 0), 1);
+              
+              // Fill a block of pixels
+              for (let j = 0; j < pixelSize && y + j < dimensions.height; j++) {
+                for (let i = 0; i < pixelSize && x + i < dimensions.width; i++) {
+                  const pixelIndex = ((y + j) * dimensions.width + (x + i)) * 4;
+                  // Set RGBA values - we'll use gradient coloring later
+                  data[pixelIndex] = 255;     // R
+                  data[pixelIndex + 1] = 255; // G
+                  data[pixelIndex + 2] = 255; // B
+                  data[pixelIndex + 3] = smoothedAlpha * 255; // A
+                }
+              }
+            }
+          }
+          
+          // Put image data to offscreen canvas
+          offCtx.putImageData(imgData, 0, 0);
+          
+          // Create gradient background
+          ctx.fillStyle = createGradient();
+          ctx.fillRect(0, 0, dimensions.width, dimensions.height);
+          
+          // Draw metaball field with composite operation
+          ctx.globalCompositeOperation = 'source-in';
+          ctx.drawImage(offscreen, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+        };
+        
+        // Animation loop
+        const animate = () => {
+          updateMetaballs();
+          render();
+          animationFrameId = window.requestAnimationFrame(animate);
+        };
+        
+        animate();
+        
+        return () => {
+          window.cancelAnimationFrame(animationFrameId);
+        };
+      }, [dimensions, color1, color2]); // Dependency array includes colors to re-render when they change
+    
+      // Resize handler
+      useEffect(() => {
+        const handleResize = () => {
+          // Keep aspect ratio but constrain width
+          const width = Math.min(320, window.innerWidth - 40);
+          setDimensions({
+            width,
+            height: width * 1.5  // Maintain aspect ratio
+          });
+        };
+        
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        
+        return () => {
+          window.removeEventListener('resize', handleResize);
+        };
+      }, []);
+    
+      return (
+        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+          <div style={{padding: '1rem', backgroundColor: '#121212', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'}}>
+            <canvas
+              ref={canvasRef}
+              width={dimensions.width}
+              height={dimensions.height}
+              style={{borderRadius: '0.25rem', border: '2px solid #333'}}
+            />
+            
+            <div style={{marginTop: '1rem', display: 'flex', justifyContent: 'center'}}>
+              <button
+                onClick={generateRandomValue}
+                style={{
+                  backgroundColor: '#2563eb',
+                  color: 'white',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.25rem',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+              >
+                Generate Key
+              </button>
+            </div>
+            
+            <div style={{marginTop: '1rem'}}>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
+                <label style={{color: 'white', fontSize: '0.875rem'}}>Output Length (chars):</label>
+                <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+                  <input
+                    type="range"
+                    min="8"
+                    max="64"
+                    value={randomLength}
+                    onChange={(e) => setRandomLength(parseInt(e.target.value))}
+                    style={{flexGrow: 1}}
+                  />
+                  <span style={{color: 'white', fontSize: '0.875rem'}}>{randomLength}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{
+              marginTop: '1rem', 
+              backgroundColor: '#1e293b', 
+              padding: '0.5rem', 
+              borderRadius: '0.25rem',
+              fontFamily: 'monospace', 
+              color: '#4ade80', 
+              overflowX: 'auto'
+            }}>
+              <code>{randomOutput || "Click Generate Key"}</code>
+            </div>
+          </div>
+          
+          <div style={{marginTop: '1rem', fontSize: '0.875rem', color: '#6b7280', maxWidth: '20rem', textAlign: 'center'}}>
+            Virtual LavaRand RNG - Entropy from metaball simulation
+          </div>
+        </div>
+      );
+    };
+    
+    ReactDOM.render(<LavaLampRNG />, document.getElementById('root'));
+  </script>
+</body>
+</html>
